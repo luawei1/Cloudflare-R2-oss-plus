@@ -61,9 +61,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       password?: string;
       maxDownloads?: number;
       trackDownloads?: boolean;
+      allowPreview?: boolean;
     };
 
-    const { key, duration, customMinutes, password, maxDownloads, trackDownloads } = body;
+    const { key, duration, customMinutes, password, maxDownloads, trackDownloads, allowPreview } = body;
 
     if (!key) {
       return new Response(JSON.stringify({ error: '文件路径不能为空' }), {
@@ -126,7 +127,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       driveId,
       host,
       downloads: 0,
-      createdBy: username || 'anonymous'
+      createdBy: username || 'anonymous',
+      allowPreview: allowPreview !== false,
     };
 
     // 添加可选字段
@@ -163,7 +165,8 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         fileSize: shareData.fileSize,
         expiresAt: expiresAt,
         hasPassword: !!password,
-        maxDownloads: maxDownloads || null
+        maxDownloads: maxDownloads || null,
+        allowPreview: shareData.allowPreview,
       }
     }), {
       headers: { 'Content-Type': 'application/json' }

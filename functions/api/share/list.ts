@@ -22,6 +22,7 @@ function toShareSummary(share: ShareData, origin: string) {
     createdBy: share.createdBy,
     host: share.host || null,
     trackDownloads: !!share.trackDownloads,
+    allowPreview: share.allowPreview !== false,
     downloadRecords: share.downloadRecords || [],
   };
 }

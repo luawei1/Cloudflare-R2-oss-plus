@@ -91,7 +91,7 @@
               </template>
               <!-- Edit Markdown -->
               <button
-                v-if="fileType === 'markdown' && editable && fileKey"
+                v-if="canEditText && editable && fileKey"
                 class="preview-btn"
                 @click="editMarkdown"
                 title="编辑 Markdown"
@@ -240,6 +240,15 @@
               <div class="word-content" ref="wordRef" v-html="wordContent"></div>
             </div>
 
+            <!-- PowerPoint Preview -->
+            <div v-else-if="fileType === 'powerpoint'" class="preview-ppt-container">
+              <div v-if="pptSlides.length" class="ppt-slide">
+                <div class="ppt-slide-counter">{{ pptCurrentSlide + 1 }} / {{ pptSlides.length }}</div>
+                <div class="ppt-slide-content">{{ pptSlides[pptCurrentSlide] }}</div>
+              </div>
+              <div v-else class="preview-unsupported">无法读取此 PPTX 文件，请下载后在本地打开。</div>
+            </div>
+
             <!-- Code/Text Preview -->
             <div v-else-if="fileType === 'code' || fileType === 'text'" class="preview-code-container">
               <div class="code-header">
@@ -267,6 +276,7 @@
 <script>
 import { escapeHtml, sanitizeHtmlFragment, sanitizeImageSrc, sanitizeLinkHref } from "./markdown-sanitize.mjs";
 import { encodePathForUrl } from "./url-utils.mjs";
+import JSZip from "jszip";
 
 // Library loading utilities
 const loadScript = (src) => {
@@ -336,6 +346,8 @@ const getFileType = (fileName, contentType = '') => {
     excel: ['xlsx', 'xls', 'csv'],
     // Word
     word: ['docx', 'doc'],
+    // PowerPoint
+    powerpoint: ['pptx', 'ppt'],
     // Code
     code: [
       'js', 'ts', 'jsx', 'tsx', 'vue', 'svelte',
@@ -459,6 +471,10 @@ export default {
       pdfCurrentPage: 1,
       pdfTotalPages: 0,
       pdfRendering: false,
+      pdfRenderQueued: false,
+      pdfRenderTask: null,
+      pdfResizeObserver: null,
+      pdfResizeFrame: 0,
 
       // Markdown
       markdownContent: '',
@@ -469,10 +485,14 @@ export default {
       currentSheetIndex: 0,
       excelContent: '',
 
-      // Word
-      wordContent: '',
+    // Word
+    wordContent: '',
 
-      // Code
+    // PowerPoint
+    pptSlides: [],
+    pptCurrentSlide: 0,
+
+    // Code
       codeContent: '',
       codeLanguage: '',
       codeCopied: false,
@@ -487,6 +507,9 @@ export default {
     // 用于 fetch 内容的 URL（优先使用 fetchUrl 避免 CORS）
     contentFetchUrl() {
       return this.fetchUrl || this.fileUrl;
+    },
+    canEditText() {
+      return ['markdown', 'code', 'text'].includes(this.fileType);
     }
   },
   watch: {
@@ -498,6 +521,7 @@ export default {
         document.addEventListener('keydown', this.handleKeydown);
         this.$nextTick(() => this.$refs.dialogRef?.focus());
       } else {
+        this.cleanupPdfRenderer();
         this.reset();
         document.body.style.overflow = '';
         document.removeEventListener('keydown', this.handleKeydown);
@@ -552,6 +576,8 @@ export default {
       this.currentSheetIndex = 0;
       this.excelContent = '';
       this.wordContent = '';
+      this.pptSlides = [];
+      this.pptCurrentSlide = 0;
       this.codeContent = '';
       this.rawCodeContent = '';
     },
@@ -583,6 +609,9 @@ export default {
           case 'word':
             await this.loadWord();
             break;
+          case 'powerpoint':
+            await this.loadPowerPoint();
+            break;
           case 'code':
           case 'text':
             await this.loadCode();
@@ -602,10 +631,11 @@ export default {
     async loadPDF() {
       this.loadingText = '加载 PDF 预览库...';
       await loadScript(CDN.pdfjs);
+      if (!window.pdfjsLib?.getDocument) {
+        throw new Error('PDF 预览库加载失败，请检查网络或内容安全策略');
+      }
 
-      // Set worker
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker;
-
       this.loadingText = '加载 PDF 文件...';
       const isTemporaryUrl = new URL(this.contentFetchUrl, window.location.origin).searchParams.has('access');
       const loadingTask = window.pdfjsLib.getDocument({
@@ -618,41 +648,98 @@ export default {
 
       this.loading = false;
       await this.$nextTick();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      this.observePdfContainer();
       await this.renderPDFPage();
     },
 
-    async renderPDFPage() {
-      if (!this.pdfDoc || this.pdfRendering) return;
-
-      this.pdfRendering = true;
-      const page = await this.pdfDoc.getPage(this.pdfCurrentPage);
-
-      const canvas = this.$refs.pdfCanvasRef;
+    observePdfContainer() {
+      this.pdfResizeObserver?.disconnect();
       const container = this.$refs.pdfContainerRef;
-      if (!canvas || !container) {
-        this.pdfRendering = false;
+      if (!container || !window.ResizeObserver) return;
+
+      this.pdfResizeObserver = new ResizeObserver(() => {
+        cancelAnimationFrame(this.pdfResizeFrame);
+        this.pdfResizeFrame = requestAnimationFrame(() => this.queuePdfRender());
+      });
+      this.pdfResizeObserver.observe(container);
+    },
+
+    queuePdfRender() {
+      if (!this.pdfDoc) return;
+      if (this.pdfRendering) {
+        this.pdfRenderQueued = true;
+        return;
+      }
+      this.renderPDFPage();
+    },
+
+    async renderPDFPage(retries = 3) {
+      if (!this.pdfDoc) return;
+      if (this.pdfRendering) {
+        this.pdfRenderQueued = true;
         return;
       }
 
-      const ctx = canvas.getContext('2d');
+      this.pdfRendering = true;
+      try {
+        const canvas = this.$refs.pdfCanvasRef;
+        const container = this.$refs.pdfContainerRef;
+        if (!canvas || !container) return;
 
-      // Calculate scale to fit container
-      const containerWidth = container.clientWidth - 40;
-      const viewport = page.getViewport({ scale: 1 });
-      const scale = (containerWidth / viewport.width) * this.zoomLevel;
-      const scaledViewport = page.getViewport({ scale });
+        const availableWidth = container.clientWidth - 40;
+        const availableHeight = container.clientHeight - 40;
+        if (availableWidth <= 0 || availableHeight <= 0) {
+          if (retries > 0) {
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+            this.pdfRendering = false;
+            return this.renderPDFPage(retries - 1);
+          }
+          throw new Error('PDF 预览区域未完成布局，请关闭后重试');
+        }
 
-      // Set canvas size
-      canvas.width = scaledViewport.width;
-      canvas.height = scaledViewport.height;
+        const page = await this.pdfDoc.getPage(this.pdfCurrentPage);
+        const baseViewport = page.getViewport({ scale: 1 });
+        const fitScale = Math.min(availableWidth / baseViewport.width, availableHeight / baseViewport.height);
+        const viewport = page.getViewport({ scale: Math.max(fitScale * this.zoomLevel, 0.05) });
+        const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('浏览器不支持 PDF 画布渲染');
 
-      // Render
-      await page.render({
-        canvasContext: ctx,
-        viewport: scaledViewport
-      }).promise;
+        this.pdfRenderTask?.cancel?.();
+        canvas.width = Math.floor(viewport.width * pixelRatio);
+        canvas.height = Math.floor(viewport.height * pixelRatio);
+        canvas.style.width = `${Math.floor(viewport.width)}px`;
+        canvas.style.height = `${Math.floor(viewport.height)}px`;
+        context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+        context.clearRect(0, 0, viewport.width, viewport.height);
 
+        this.pdfRenderTask = page.render({ canvasContext: context, viewport });
+        await this.pdfRenderTask.promise;
+      } catch (error) {
+        if (error?.name !== 'RenderingCancelledException') {
+          console.error('PDF render error:', error);
+          this.error = error?.message || 'PDF 页面渲染失败';
+        }
+      } finally {
+        this.pdfRenderTask = null;
+        this.pdfRendering = false;
+        if (this.pdfRenderQueued) {
+          this.pdfRenderQueued = false;
+          this.queuePdfRender();
+        }
+      }
+    },
+
+    cleanupPdfRenderer() {
+      cancelAnimationFrame(this.pdfResizeFrame);
+      this.pdfResizeFrame = 0;
+      this.pdfResizeObserver?.disconnect();
+      this.pdfResizeObserver = null;
+      this.pdfRenderTask?.cancel?.();
+      this.pdfRenderTask = null;
       this.pdfRendering = false;
+      this.pdfRenderQueued = false;
     },
 
     prevPage() {
@@ -811,6 +898,31 @@ export default {
       this.loading = false;
     },
 
+    // PowerPoint Preview (PPTX is a ZIP package; legacy .ppt remains download-only)
+    async loadPowerPoint() {
+      if (this.fileName.toLowerCase().endsWith('.ppt')) {
+        throw new Error('旧版 PPT 格式不支持在线预览，请下载后在本地打开');
+      }
+      this.loadingText = '读取 PPTX 幻灯片...';
+      const response = await this.authFetch(this.contentFetchUrl);
+      if (!response.ok) throw new Error(response.status === 403 ? '无权访问此文件' : '加载失败');
+      const zip = await JSZip.loadAsync(await response.arrayBuffer());
+      const slidePaths = Object.keys(zip.files)
+        .filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
+        .sort((left, right) => Number(left.match(/\d+/)?.[0]) - Number(right.match(/\d+/)?.[0]));
+      this.pptSlides = await Promise.all(slidePaths.map(async (path) => {
+        const xml = await zip.file(path)?.async('text');
+        if (!xml) return '';
+        const document = new DOMParser().parseFromString(xml, 'application/xml');
+        return [...document.querySelectorAll('a\\:t, t')]
+          .map((node) => node.textContent?.trim() || '')
+          .filter(Boolean)
+          .join('\n');
+      }));
+      this.pptSlides = this.pptSlides.filter(Boolean);
+      this.loading = false;
+    },
+
     // Code Preview
     async loadCode() {
       this.loadingText = '加载代码高亮库...';
@@ -887,6 +999,7 @@ export default {
     // Fullscreen
     toggleFullscreen() {
       this.isFullscreen = !this.isFullscreen;
+      this.$nextTick(() => requestAnimationFrame(() => this.queuePdfRender()));
     },
 
     // Keyboard
@@ -931,6 +1044,7 @@ export default {
     }
   },
   beforeUnmount() {
+    this.cleanupPdfRenderer();
     document.body.style.overflow = '';
     document.removeEventListener('keydown', this.handleKeydown);
   }
@@ -1599,6 +1713,44 @@ export default {
   max-width: 100%;
 }
 
+/* PowerPoint Preview */
+.preview-ppt-container {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: #1f2937;
+}
+
+.ppt-slide {
+  width: min(100%, 960px);
+  min-height: min(54vw, 540px);
+  aspect-ratio: 16 / 9;
+  position: relative;
+  padding: clamp(32px, 6vw, 88px);
+  background: white;
+  color: #18212f;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+}
+
+.ppt-slide-counter {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.ppt-slide-content {
+  white-space: pre-wrap;
+  font-size: clamp(16px, 2.4vw, 28px);
+  line-height: 1.55;
+  max-height: 100%;
+  overflow: auto;
+}
+
 /* Code Preview */
 .preview-code-container {
   width: 100%;
@@ -1703,17 +1855,30 @@ export default {
 @media (max-width: 768px) {
   .file-preview-container {
     width: 100vw;
-    height: 100vh;
+    height: 100dvh;
+    min-height: 100vh;
     border-radius: 0;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .preview-header {
     padding: 10px 12px;
+    gap: 6px;
+  }
+
+  .preview-title {
+    min-width: 0;
   }
 
   .preview-filename {
     font-size: 13px;
-    max-width: 120px;
+    max-width: min(28vw, 140px);
+  }
+
+  .preview-actions {
+    gap: 2px;
+    min-width: 0;
   }
 
   .preview-btn {

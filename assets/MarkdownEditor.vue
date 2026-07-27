@@ -46,6 +46,9 @@ const fileName = computed(() => {
 });
 
 const dirty = computed(() => content.value !== originalContent.value);
+const extension = computed(() => fileName.value.split('.').pop()?.toLowerCase() || '');
+const isHtmlFile = computed(() => ['html', 'htm'].includes(extension.value) || props.contentType.includes('text/html'));
+const isMarkdownFile = computed(() => ['md', 'markdown', 'mdown', 'mkd'].includes(extension.value));
 
 const rawUrl = computed(() => `/raw/${encodePathForUrl(props.fileKey)}`);
 const saveUrl = computed(() => `/api/write/items/${encodePathForUrl(props.fileKey)}`);
@@ -171,6 +174,14 @@ async function ensureMarkdownLibs() {
 
 let renderTimer = null;
 function renderPreviewNow() {
+  if (isHtmlFile.value) {
+    renderedHtml.value = "";
+    return;
+  }
+  if (!isMarkdownFile.value) {
+    renderedHtml.value = `<pre><code>${escapeHtml(content.value || "")}</code></pre>`;
+    return;
+  }
   if (!libsReady.value || !window.marked) {
     renderedHtml.value = "";
     return;
@@ -484,6 +495,13 @@ onBeforeUnmount(() => {
                     {{ libsError }}（仍可编辑与保存）
                   </div>
                   <div v-else-if="!libsReady" class="hint">正在加载预览组件...</div>
+                  <iframe
+                    v-else-if="isHtmlFile"
+                    class="html-preview"
+                    :srcdoc="content"
+                    sandbox
+                    title="HTML 安全预览"
+                  ></iframe>
                   <div v-else class="markdown-body" v-html="renderedHtml"></div>
                 </div>
               </div>
@@ -700,6 +718,13 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 48px;
   background: var(--card-bg);
+}
+
+.html-preview {
+  width: 100%;
+  min-height: 100%;
+  border: 0;
+  background: white;
 }
 
 .markdown-body {

@@ -326,12 +326,12 @@
             </svg>
             重命名
           </button>
-          <button class="context-menu-item" @click="editFocusedMarkdown" v-if="!isReadonly && isMarkdownFile(focusedItem)">
+          <button class="context-menu-item" @click="editFocusedText" v-if="!isReadonly && isEditableTextFile(focusedItem)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 20h9"/>
               <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
             </svg>
-            编辑 Markdown
+            编辑文本
           </button>
           <a class="context-menu-item" :href="getFileUrl(focusedItem.key)" target="_blank" download @click="showContextMenu = false">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1414,6 +1414,17 @@ export default {
       return ['md', 'markdown', 'mdown', 'mkd'].includes(ext);
     },
 
+    isEditableTextFile(file) {
+      if (!file || typeof file !== 'object' || Number(file.size || 0) > 2 * 1024 * 1024) return false;
+      const ext = getFileExtension(file.key);
+      const contentType = file.httpMetadata?.contentType || '';
+      return contentType.startsWith('text/') || [
+        'txt', 'md', 'markdown', 'mdown', 'mkd', 'json', 'json5', 'yaml', 'yml',
+        'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'vue', 'css', 'scss', 'sass',
+        'html', 'htm', 'xml', 'svg', 'sql', 'py', 'sh', 'bash', 'ini', 'toml', 'log'
+      ].includes(ext);
+    },
+
     openMarkdownEditor(fileKey, contentType = '') {
       if (!fileKey) return;
       if (this.isReadonly) {
@@ -1445,7 +1456,7 @@ export default {
       this.showMarkdownEditor = true;
     },
 
-    editFocusedMarkdown() {
+    editFocusedText() {
       if (!this.focusedItem || typeof this.focusedItem !== 'object') return;
       this.openMarkdownEditor(this.focusedItem.key, this.focusedItem.httpMetadata?.contentType || '');
       this.showContextMenu = false;

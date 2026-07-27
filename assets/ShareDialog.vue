@@ -28,6 +28,7 @@
                     <span>{{ share.hasPassword ? '密码保护' : '无需密码' }}</span>
                     <span>{{ formatExpiry(share.expiresAt) }}</span>
                     <span v-if="share.maxDownloads">限 {{ share.maxDownloads }} 次</span>
+                    <span>{{ share.allowPreview === false ? '仅下载' : '可预览' }}</span>
                   </div>
                   <div class="copy-field">
                     <input :value="share.url" readonly aria-label="分享链接" @focus="$event.target.select()" />
@@ -63,6 +64,10 @@
                 <input v-if="enableDownloadLimit" type="number" v-model.number="maxDownloads" placeholder="最大下载次数" min="1" class="download-limit-input" />
               </div>
               <div class="form-group">
+                <label class="checkbox-label"><input type="checkbox" v-model="allowPreview" /><span>允许在线预览</span></label>
+                <p class="option-hint">默认开启。视频、图片、PDF 与常见文本类文件可在分享页直接预览。</p>
+              </div>
+              <div class="form-group">
                 <label class="checkbox-label"><input type="checkbox" v-model="trackDownloads" /><span>记录下载者 IP</span></label>
                 <p v-if="trackDownloads" class="option-hint">开启后可在分享管理中查看下载记录。</p>
               </div>
@@ -83,7 +88,7 @@ export default {
   data() {
     return {
       duration: '7d', customMinutes: 60, enablePassword: false, password: '',
-      enableDownloadLimit: false, maxDownloads: 10, trackDownloads: false,
+      enableDownloadLimit: false, maxDownloads: 10, allowPreview: true, trackDownloads: false,
       loading: false, loadingShares: false, revokingId: '', error: '', copied: '', creating: false, existingShares: [],
       durationOptions: [
         { value: '1h', label: '1小时' }, { value: '1d', label: '1天' }, { value: '7d', label: '7天' },
@@ -104,7 +109,7 @@ export default {
     },
     resetForm() {
       this.duration = '7d'; this.customMinutes = 60; this.enablePassword = false; this.password = '';
-      this.enableDownloadLimit = false; this.maxDownloads = 10; this.trackDownloads = false;
+      this.enableDownloadLimit = false; this.maxDownloads = 10; this.allowPreview = true; this.trackDownloads = false;
       this.error = ''; this.copied = ''; this.creating = false;
     },
     async loadShares() {
@@ -131,7 +136,7 @@ export default {
       try {
         const response = await fetch('/api/share/create', {
           method: 'POST', headers: { 'Content-Type': 'application/json', ...this.getHeaders() },
-          body: JSON.stringify({ key: this.fileKey, duration: this.duration, customMinutes: this.duration === 'custom' ? this.customMinutes : undefined, password: this.enablePassword ? this.password : undefined, maxDownloads: this.enableDownloadLimit ? this.maxDownloads : undefined, trackDownloads: this.trackDownloads || undefined })
+          body: JSON.stringify({ key: this.fileKey, duration: this.duration, customMinutes: this.duration === 'custom' ? this.customMinutes : undefined, password: this.enablePassword ? this.password : undefined, maxDownloads: this.enableDownloadLimit ? this.maxDownloads : undefined, allowPreview: this.allowPreview, trackDownloads: this.trackDownloads || undefined })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || '创建分享失败');

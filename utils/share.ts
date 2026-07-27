@@ -21,6 +21,7 @@ export interface ShareData {
   createdBy: string;        // 创建者
   trackDownloads?: boolean; // 可选：是否记录下载者 IP
   downloadRecords?: DownloadRecord[]; // 下载记录
+  allowPreview?: boolean;   // 可选：是否允许在线预览，未设置时默认允许
 }
 
 // 生成随机分享 ID

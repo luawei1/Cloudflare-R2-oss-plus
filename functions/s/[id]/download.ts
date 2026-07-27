@@ -1,4 +1,5 @@
-import { ShareData, verifyPassword, DownloadRecord } from "@/utils/share";
+import { ShareData, DownloadRecord } from "@/utils/share";
+import { hasSharePreviewSession } from "@/utils/share-session";
 import { parseBucketPath } from "@/utils/bucket";
 
 interface Env {
@@ -10,7 +11,6 @@ interface Env {
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const shareId = context.params.id as string;
   const url = new URL(context.request.url);
-  const password = url.searchParams.get('pwd');
 
   try {
     const shareJson = await context.env.ossShares.get(`share:${shareId}`);
@@ -38,14 +38,14 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return new Response('已达到最大下载次数', { status: 410 });
     }
 
-    // 验证密码
-    if (share.password) {
-      if (!password) {
-        return new Response('需要密码，请先通过分享页面验证', { status: 401 });
-      }
-      if (!(await verifyPassword(password, share.password))) {
-        return new Response('密码错误', { status: 401 });
-      }
+    // 密码分享只能在分享页面验证后使用短时 HttpOnly 会话下载。
+    if (share.password && !(await hasSharePreviewSession(
+      context.env.ossShares,
+      context.request.headers.get('Cookie'),
+      shareId,
+      url.hostname,
+    ))) {
+      return new Response('需要密码，请先通过分享页面验证', { status: 401 });
     }
 
     // 更新下载次数和记录
