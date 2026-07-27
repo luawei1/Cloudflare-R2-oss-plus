@@ -276,7 +276,6 @@
 <script>
 import { escapeHtml, sanitizeHtmlFragment, sanitizeImageSrc, sanitizeLinkHref } from "./markdown-sanitize.mjs";
 import { encodePathForUrl } from "./url-utils.mjs";
-import JSZip from "jszip";
 
 // Library loading utilities
 const loadScript = (src) => {
@@ -318,6 +317,7 @@ const CDN = {
   hljsStyle: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css',
   xlsx: 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
   mammoth: 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js',
+  jszip: 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
 };
 
 // File type detection
@@ -903,10 +903,13 @@ export default {
       if (this.fileName.toLowerCase().endsWith('.ppt')) {
         throw new Error('旧版 PPT 格式不支持在线预览，请下载后在本地打开');
       }
+      this.loadingText = '加载 PPTX 预览库...';
+      await loadScript(CDN.jszip);
+      if (!window.JSZip?.loadAsync) throw new Error('PPTX 预览库加载失败，请检查网络或内容安全策略');
       this.loadingText = '读取 PPTX 幻灯片...';
       const response = await this.authFetch(this.contentFetchUrl);
       if (!response.ok) throw new Error(response.status === 403 ? '无权访问此文件' : '加载失败');
-      const zip = await JSZip.loadAsync(await response.arrayBuffer());
+      const zip = await window.JSZip.loadAsync(await response.arrayBuffer());
       const slidePaths = Object.keys(zip.files)
         .filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path))
         .sort((left, right) => Number(left.match(/\d+/)?.[0]) - Number(right.match(/\d+/)?.[0]));
