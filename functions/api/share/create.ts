@@ -7,6 +7,7 @@ import {
   calculateTTL,
   hashPassword
 } from "@/utils/share";
+import { addShareToIndex } from "@/utils/share-index";
 
 interface Env {
   BUCKET: R2Bucket;
@@ -70,6 +71,24 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         headers: { 'Content-Type': 'application/json' }
       });
     }
+    if (password !== undefined && (!password || !password.trim())) {
+      return new Response(JSON.stringify({ error: '访问密码不能为空' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (duration === 'custom' && (!Number.isFinite(customMinutes) || customMinutes <= 0)) {
+      return new Response(JSON.stringify({ error: '自定义有效期必须大于 0 分钟' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    if (maxDownloads !== undefined && (!Number.isFinite(maxDownloads) || maxDownloads <= 0)) {
+      return new Response(JSON.stringify({ error: '下载次数必须大于 0' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
 
     // 获取文件信息
     const [bucket] = await parseBucketPath(context);
@@ -127,14 +146,12 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       kvOptions.expirationTtl = ttl;
     }
     await context.env.ossShares.put(`share:${shareId}`, JSON.stringify(shareData), kvOptions);
+    await addShareToIndex(context.env.ossShares, shareData);
 
     // 生成分享链接
     const origin = new URL(context.request.url).origin;
     const shareUrl = `${origin}/s/${shareId}`;
     const downloadUrl = `${origin}/s/${shareId}/download`;
-    const wgetCommand = password
-      ? `wget --content-disposition "${downloadUrl}?pwd=YOUR_PASSWORD"`
-      : `wget --content-disposition "${downloadUrl}"`;
 
     return new Response(JSON.stringify({
       success: true,
@@ -142,7 +159,6 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         id: shareId,
         url: shareUrl,
         downloadUrl: downloadUrl,
-        wgetCommand: wgetCommand,
         fileName: shareData.fileName,
         fileSize: shareData.fileSize,
         expiresAt: expiresAt,

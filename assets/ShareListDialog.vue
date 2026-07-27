@@ -107,12 +107,14 @@ async function doDeleteShare(id) {
 }
 
 // 复制分享链接
-function copyLink(share) {
-  const host = share?.host;
-  const origin = host ? `${window.location.protocol}//${host}` : window.location.origin;
-  const url = `${origin}/s/${share.id}`;
-  navigator.clipboard.writeText(url);
-  emit('toast', { type: 'success', message: '链接已复制' });
+async function copyLink(share) {
+  const url = share?.url || `${share?.host ? `${window.location.protocol}//${share.host}` : window.location.origin}/s/${share.id}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    emit('toast', { type: 'success', message: '链接已复制' });
+  } catch {
+    emit('toast', { type: 'error', message: '复制失败，请手动复制链接' });
+  }
 }
 
 // 格式化文件大小
@@ -256,7 +258,7 @@ watch(() => props.show, (newVal) => {
                   class="stat-item clickable"
                   :class="{ active: expandedShare === share.id }"
                   @click="toggleDownloadRecords(share.id)"
-                  :title="share.downloadRecords?.length ? '点击查看下载记录' : '暂无下载记录'"
+                  :title="share.trackDownloads ? (share.downloadRecords?.length ? '点击查看下载记录' : '已开启记录，暂无下载记录') : '未开启下载记录'"
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
@@ -293,7 +295,7 @@ watch(() => props.show, (newVal) => {
                 </div>
               </div>
               <div v-else-if="expandedShare === share.id && !share.downloadRecords?.length" class="download-records empty">
-                <span>暂无下载记录</span>
+                <span>{{ share.trackDownloads ? '已开启记录，暂无下载记录' : '此分享未开启下载记录' }}</span>
               </div>
             </div>
             <div class="share-actions">

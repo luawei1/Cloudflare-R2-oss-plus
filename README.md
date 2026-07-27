@@ -71,7 +71,6 @@
 | ⏰ **时效控制** | 支持 1小时/1天/7天/30天/永久/自定义 |
 | 🔒 **密码保护** | 可选设置访问密码 |
 | 📊 **下载限制** | 可选限制最大下载次数 |
-| 💻 **wget 命令** | 自动生成 wget 下载命令 |
 
 ### 权限系统
 | 功能 | 说明 |
@@ -512,23 +511,15 @@ type:视频 size:10MB-500MB
    - **密码保护**：可选，设置访问密码
    - **下载限制**：可选，限制最大下载次数
 3. 点击 **创建分享链接**
-4. 复制分享链接或 wget 命令
+4. 复制分享链接；访问者在分享页面中完成下载，密码保护文件会先要求输入密码。
 
 #### 分享链接格式
 | 类型 | 格式 |
 |------|------|
 | 网页访问 | `https://your-domain.com/s/{shareId}` |
 | 直接下载 | `https://your-domain.com/s/{shareId}/download` |
-| 带密码下载 | `https://your-domain.com/s/{shareId}/download?pwd=密码` |
 
-#### wget 下载示例
-```bash
-# 无密码
-wget --content-disposition "https://your-domain.com/s/abc123/download"
-
-# 有密码
-wget --content-disposition "https://your-domain.com/s/abc123/download?pwd=mypassword"
-```
+为避免密码出现在浏览器历史、终端历史和访问日志中，请通过网页分享页提交密码，不要把密码放入下载 URL。
 
 ### 分享管理（管理员功能）
 

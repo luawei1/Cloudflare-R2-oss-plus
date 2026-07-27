@@ -22,7 +22,7 @@ function generateSharePage(share: ShareData, origin: string, error?: string): st
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${share.fileName} - 文件分享</title>
+  <title>${escapeHtml(share.fileName)} - 文件分享</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -131,37 +131,6 @@ function generateSharePage(share: ShareData, origin: string, error?: string): st
       transform: translateY(-2px);
       box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
     }
-    .wget-section {
-      margin-top: 20px;
-      padding-top: 20px;
-      border-top: 1px solid #eee;
-    }
-    .wget-title {
-      font-size: 14px;
-      color: #666;
-      margin-bottom: 10px;
-    }
-    .wget-cmd {
-      background: #f5f5f5;
-      padding: 12px;
-      border-radius: 8px;
-      font-family: monospace;
-      font-size: 12px;
-      word-break: break-all;
-      position: relative;
-    }
-    .copy-btn {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      padding: 4px 8px;
-      font-size: 12px;
-      background: #667eea;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-    }
     .expired {
       text-align: center;
       padding: 40px;
@@ -217,27 +186,8 @@ function generateSharePage(share: ShareData, origin: string, error?: string): st
           下载文件
         </button>
       </form>
-
-      <div class="wget-section">
-        <div class="wget-title">wget 命令：</div>
-        <div class="wget-cmd" id="wget-cmd">
-          wget --content-disposition "${origin}/s/${share.id}/download${share.password ? '?pwd=YOUR_PASSWORD' : ''}"
-          <button class="copy-btn" onclick="copyWget()">复制</button>
-        </div>
-      </div>
     </div>
   </div>
-
-  <script>
-    function copyWget() {
-      const cmd = document.getElementById('wget-cmd').innerText.replace('复制', '').trim();
-      navigator.clipboard.writeText(cmd).then(() => {
-        const btn = document.querySelector('.copy-btn');
-        btn.textContent = '已复制';
-        setTimeout(() => btn.textContent = '复制', 2000);
-      });
-    }
-  </script>
 </body>
 </html>`;
 }

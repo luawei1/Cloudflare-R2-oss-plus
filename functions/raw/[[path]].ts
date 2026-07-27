@@ -1,5 +1,6 @@
 import { notFound, parseBucketPath } from "@/utils/bucket";
 import { decodeBasicAuth, getGuestDirs, THUMBNAILS_PATH, extractApiKeyFromHeaders } from "@/utils/auth";
+import { validateFileAccessGrant } from "@/utils/file-access";
 
 // 解析用户权限（支持 Basic Auth 和 API Key）
 async function parseUserPermissions(env: any, headers: Headers): Promise<{
@@ -103,14 +104,21 @@ export async function onRequestGet(context) {
     });
   }
 
-  // 权限检查（支持 API Key）
+  // 权限检查（支持 API Key 和短时文件访问令牌）
   const headers = new Headers(context.request.headers);
   const { isAdmin, allowedPaths } = await parseUserPermissions(context.env, headers);
+  const accessToken = new URL(context.request.url).searchParams.get("access");
+  const hasTemporaryAccess = await validateFileAccessGrant(
+    context.env.ossShares,
+    accessToken,
+    path,
+    new URL(context.request.url).hostname,
+  );
 
-  if (!isFileAllowed(path, allowedPaths, isAdmin)) {
+  if (!hasTemporaryAccess && !isFileAllowed(path, allowedPaths, isAdmin)) {
     return new Response("Access denied", {
       status: 403,
-      headers: { "Content-Type": "text/plain" }
+      headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" }
     });
   }
 
@@ -150,10 +158,10 @@ export async function onRequestGet(context) {
     const headers = new Headers(response.headers);
 
     // 缩略图设置长期缓存
-    if (path.startsWith(THUMBNAILS_PATH)) {
+    if (path.startsWith(THUMBNAILS_PATH) && !hasTemporaryAccess) {
       headers.set("Cache-Control", "max-age=31536000");
     } else {
-      // 普通文件避免缓存导致“保存后仍看到旧内容”
+      // 带临时授权的 URL 与普通文件均不得被共享缓存保存。
       headers.set("Cache-Control", "no-store");
     }
 

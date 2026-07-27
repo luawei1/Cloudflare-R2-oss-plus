@@ -2,7 +2,7 @@
   <Teleport to="body">
     <Transition name="preview-fade">
       <div v-if="modelValue" class="file-preview-overlay" @click.self="close">
-        <div class="file-preview-container" :class="{ fullscreen: isFullscreen }">
+        <div ref="dialogRef" class="file-preview-container" :class="{ fullscreen: isFullscreen }" role="dialog" aria-modal="true" :aria-label="`预览 ${fileName}`" tabindex="-1">
           <!-- Header -->
           <div class="preview-header">
             <div class="preview-title">
@@ -118,7 +118,7 @@
                 </svg>
               </a>
               <!-- Fullscreen -->
-              <button class="preview-btn" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'">
+              <button class="preview-btn" @click="toggleFullscreen" :title="isFullscreen ? '退出全屏' : '全屏'" :aria-label="isFullscreen ? '退出全屏' : '全屏'">
                 <svg v-if="!isFullscreen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="15 3 21 3 21 9"/>
                   <polyline points="9 21 3 21 3 15"/>
@@ -133,7 +133,7 @@
                 </svg>
               </button>
               <!-- Close -->
-              <button class="preview-btn close-btn" @click="close" title="关闭">
+              <button class="preview-btn close-btn" @click="close" title="关闭" aria-label="关闭预览">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/>
                   <line x1="6" y1="6" x2="18" y2="18"/>
@@ -192,7 +192,7 @@
                 ref="videoRef"
                 :src="fileUrl"
                 controls
-                autoplay
+                preload="metadata"
                 @error="onVideoError"
               >
                 您的浏览器不支持视频播放
@@ -212,7 +212,7 @@
                 ref="audioRef"
                 :src="fileUrl"
                 controls
-                autoplay
+                preload="metadata"
                 @error="onAudioError"
               >
                 您的浏览器不支持音频播放
@@ -477,6 +477,7 @@ export default {
       codeLanguage: '',
       codeCopied: false,
       rawCodeContent: '',
+      lastFocusedElement: null,
     };
   },
   computed: {
@@ -491,13 +492,17 @@ export default {
   watch: {
     modelValue(val) {
       if (val) {
+        this.lastFocusedElement = document.activeElement;
         this.loadPreview();
         document.body.style.overflow = 'hidden';
         document.addEventListener('keydown', this.handleKeydown);
+        this.$nextTick(() => this.$refs.dialogRef?.focus());
       } else {
         this.reset();
         document.body.style.overflow = '';
         document.removeEventListener('keydown', this.handleKeydown);
+        this.lastFocusedElement?.focus?.();
+        this.lastFocusedElement = null;
       }
     }
   },
@@ -524,10 +529,13 @@ export default {
       return headers;
     },
 
-    // 带认证的 fetch
+    // 带认证的 fetch。临时预览 URL 已包含单文件短时授权，不再附加长期凭据。
     async authFetch(url) {
-      // 预览内容优先保证“及时性”，避免浏览器缓存导致保存后仍看到旧内容
-      return fetch(url, { headers: this.getAuthHeaders(), cache: 'no-store' });
+      const isTemporaryUrl = new URL(url, window.location.origin).searchParams.has('access');
+      return fetch(url, {
+        headers: isTemporaryUrl ? {} : this.getAuthHeaders(),
+        cache: 'no-store'
+      });
     },
 
     reset() {
@@ -599,9 +607,10 @@ export default {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker;
 
       this.loadingText = '加载 PDF 文件...';
+      const isTemporaryUrl = new URL(this.contentFetchUrl, window.location.origin).searchParams.has('access');
       const loadingTask = window.pdfjsLib.getDocument({
         url: this.contentFetchUrl,
-        httpHeaders: this.getAuthHeaders(),
+        httpHeaders: isTemporaryUrl ? {} : this.getAuthHeaders(),
       });
       this.pdfDoc = await loadingTask.promise;
       this.pdfTotalPages = this.pdfDoc.numPages;
@@ -775,9 +784,9 @@ export default {
       const sheet = this.excelWorkbook.Sheets[sheetName];
 
       // Convert to HTML table
-      this.excelContent = window.XLSX.utils.sheet_to_html(sheet, {
+      this.excelContent = sanitizeHtmlFragment(window.XLSX.utils.sheet_to_html(sheet, {
         editable: false
-      });
+      }));
     },
 
     // Word Preview
@@ -793,7 +802,7 @@ export default {
       const arrayBuffer = await response.arrayBuffer();
 
       const result = await window.mammoth.convertToHtml({ arrayBuffer });
-      this.wordContent = result.value;
+      this.wordContent = sanitizeHtmlFragment(result.value);
 
       if (result.messages.length > 0) {
         console.warn('Mammoth warnings:', result.messages);

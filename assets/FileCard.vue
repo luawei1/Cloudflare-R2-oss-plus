@@ -102,6 +102,7 @@
     <!-- Meta Info -->
     <div class="file-card-meta">
       <span>{{ isFolder ? '文件夹' : formatSize(file.size) }}</span>
+      <span v-if="shareCount" class="share-badge" :aria-label="`已分享 ${shareCount} 条链接`">已分享 · {{ shareCount }}</span>
       <span v-if="file.uploaded && !isFolder" class="file-card-time">{{ formatDate(file.uploaded) }}</span>
     </div>
   </div>
@@ -142,6 +143,7 @@
       <div class="file-list-item-name" :title="fileName">{{ fileName }}</div>
       <div class="file-list-item-meta">
         <span>{{ isFolder ? '文件夹' : formatSize(file.size) }}</span>
+        <span v-if="shareCount" class="share-badge" :aria-label="`已分享 ${shareCount} 条链接`">已分享 · {{ shareCount }}</span>
         <span v-if="file.uploaded">{{ formatDate(file.uploaded) }}</span>
       </div>
     </div>
@@ -174,6 +176,10 @@ export default {
     fileBaseUrl: {
       type: String,
       default: ''
+    },
+    shareCount: {
+      type: Number,
+      default: 0
     }
   },
   emits: ['click', 'select', 'contextmenu', 'preview'],
@@ -254,7 +260,7 @@ export default {
     },
     handleClick(e) {
       if (this.selectionMode) {
-        this.$emit('select', this.file);
+        this.$emit('select', this.file.key);
       } else {
         this.$emit('click', this.file);
       }
@@ -386,9 +392,14 @@ export default {
   gap: 2px;
 }
 
-.file-card-time {
+  .file-card-time {
   font-size: 11px;
   opacity: 0.8;
+}
+
+.share-badge {
+  color: var(--primary-color);
+  font-weight: 500;
 }
 
 /* List Item Styles */

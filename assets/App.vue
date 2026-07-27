@@ -107,6 +107,7 @@
           :selected="isSelected(file.key)"
           :selectionMode="selectionMode"
           :fileBaseUrl="fileBaseUrl"
+          :shareCount="shareCounts[file.key] || 0"
           @click="preview(file)"
           @select="toggleSelect(file.key)"
           @contextmenu="showContextMenuFor($event, file)"
@@ -226,6 +227,7 @@
       :show="showShareDialog"
       :fileKey="shareFileKey"
       @close="showShareDialog = false"
+      @changed="updateShareCount"
     />
 
     <!-- Share List Dialog (Admin) -->
@@ -523,6 +525,7 @@ export default {
     // Share
     showShareDialog: false,
     shareFileKey: '',
+    shareCounts: {},
 
     // Share List (admin)
     showShareListDialog: false,
@@ -1082,10 +1085,14 @@ export default {
       this.showContextMenu = true;
     },
 
-    copyLink(link) {
+    async copyLink(link) {
       const url = new URL(link, window.location.origin);
-      navigator.clipboard.writeText(url.toString());
-      this.$refs.toast?.success('链接已复制');
+      try {
+        await navigator.clipboard.writeText(url.toString());
+        this.$refs.toast?.success('链接已复制');
+      } catch {
+        this.$refs.toast?.error('复制失败，请手动复制链接');
+      }
       this.showContextMenu = false;
     },
 
@@ -1275,6 +1282,39 @@ export default {
       this.refreshing = false;
     },
 
+    updateShareCount({ key, count }) {
+      this.shareCounts = { ...this.shareCounts, [key]: count };
+    },
+
+    async loadShareCounts(files) {
+      const credentials = localStorage.getItem('auth_credentials');
+      if (!credentials || !files.length) {
+        this.shareCounts = {};
+        return;
+      }
+
+      try {
+        const response = await fetch('/api/share/list', {
+          headers: { Authorization: `Basic ${credentials}` },
+          cache: 'no-store',
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '获取分享状态失败');
+
+        const visibleKeys = new Set(files.map((file) => file.key));
+        const counts = {};
+        for (const share of data.shares || []) {
+          if (visibleKeys.has(share.key)) {
+            counts[share.key] = (counts[share.key] || 0) + 1;
+          }
+        }
+        this.shareCounts = counts;
+      } catch (error) {
+        console.warn('Load share counts error:', error);
+        this.shareCounts = {};
+      }
+    },
+
     fetchFiles() {
       this.files = [];
       this.folders = [];
@@ -1292,9 +1332,10 @@ export default {
           if (!res.ok) throw new Error('获取文件列表失败');
           return res.json();
         })
-        .then((files) => {
+        .then(async (files) => {
           this.files = files.value || [];
           this.folders = files.folders || [];
+          await this.loadShareCounts(this.files);
         })
         .catch((error) => {
           console.error('Fetch files error:', error);
@@ -1323,24 +1364,48 @@ export default {
       fileElement.value = null;
     },
 
-    preview(file) {
+    async getTemporaryFileUrl(key) {
+      const response = await fetch(`/api/file-access/${encodePathForUrl(key)}`, {
+        method: 'POST',
+        headers: this.getAuthHeaders(),
+        cache: 'no-store',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || `获取文件访问授权失败 (${response.status})`);
+      }
+      return data.url;
+    },
+
+    async preview(file) {
       // 如果传入的是文件对象
       if (typeof file === 'object') {
-        this.previewFileUrl = this.getFileUrl(file.key);
-        // fetchUrl 始终使用 /raw/ 路由，避免 CORS 问题
-        this.previewFetchUrl = `/raw/${encodePathForUrl(file.key)}`;
-          this.previewFileName = getPathName(file.key) || '';
+        this.previewFileName = getPathName(file.key) || '';
         this.previewContentType = file.httpMetadata?.contentType || '';
         this.previewFileKey = file.key || '';
+
+        try {
+          if (this.fileBaseUrl) {
+            this.previewFileUrl = this.getFileUrl(file.key);
+            this.previewFetchUrl = `/raw/${encodePathForUrl(file.key)}`;
+          } else {
+            const temporaryUrl = await this.getTemporaryFileUrl(file.key);
+            this.previewFileUrl = temporaryUrl;
+            this.previewFetchUrl = temporaryUrl;
+          }
+          this.showFilePreview = true;
+        } catch (error) {
+          this.$refs.toast?.error(error.message || '无法获取文件预览授权');
+        }
       } else {
         // 兼容旧的字符串 URL 调用
         this.previewFileUrl = file;
         this.previewFetchUrl = file;
-          this.previewFileName = getPathName(file) || '';
+        this.previewFileName = getPathName(file) || '';
         this.previewContentType = '';
         this.previewFileKey = '';
+        this.showFilePreview = true;
       }
-      this.showFilePreview = true;
     },
 
     isMarkdownFile(file) {

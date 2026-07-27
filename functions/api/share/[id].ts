@@ -1,4 +1,5 @@
 import { ShareData } from "@/utils/share";
+import { removeShareFromIndex } from "@/utils/share-index";
 import { parseBucketPath } from "@/utils/bucket";
 
 interface Env {
@@ -66,6 +67,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     // 检查是否过期
     if (share.expiresAt && Date.now() > share.expiresAt) {
       await context.env.ossShares.delete(`share:${shareId}`);
+      await removeShareFromIndex(context.env.ossShares, share);
       return new Response(JSON.stringify({ error: '分享已过期' }), {
         status: 410,
         headers: { 'Content-Type': 'application/json' }
@@ -158,6 +160,7 @@ export const onRequestDelete: PagesFunction<Env> = async (context) => {
     }
 
     await context.env.ossShares.delete(`share:${shareId}`);
+    await removeShareFromIndex(context.env.ossShares, share);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' }

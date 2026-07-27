@@ -6,7 +6,7 @@ interface Env {
   ossShares: KVNamespace;
 }
 
-// GET - 直接下载（用于 wget 等工具）
+// GET - 直接下载（供分享页完成验证后使用）
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const shareId = context.params.id as string;
   const url = new URL(context.request.url);
@@ -41,7 +41,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     // 验证密码
     if (share.password) {
       if (!password) {
-        return new Response('需要密码，请使用 ?pwd=YOUR_PASSWORD 参数', { status: 401 });
+        return new Response('需要密码，请先通过分享页面验证', { status: 401 });
       }
       if (!(await verifyPassword(password, share.password))) {
         return new Response('密码错误', { status: 401 });
