@@ -274,23 +274,46 @@
 </template>
 
 <script>
+import { markRaw } from "vue";
 import { escapeHtml, sanitizeHtmlFragment, sanitizeImageSrc, sanitizeLinkHref } from "./markdown-sanitize.mjs";
 import { encodePathForUrl } from "./url-utils.mjs";
 
 // Library loading utilities
+const scriptLoads = new Map();
 const loadScript = (src) => {
-  return new Promise((resolve, reject) => {
-    // Check if already loaded
-    if (document.querySelector(`script[src="${src}"]`)) {
+  if (scriptLoads.has(src)) return scriptLoads.get(src);
+
+  const promise = new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing?.dataset.loaded === 'true') {
       resolve();
       return;
     }
-    const script = document.createElement('script');
-    script.src = src;
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
+
+    const script = existing || document.createElement('script');
+    const cleanup = () => {
+      script.onload = null;
+      script.onerror = null;
+    };
+    script.onload = () => {
+      script.dataset.loaded = 'true';
+      cleanup();
+      resolve();
+    };
+    script.onerror = () => {
+      cleanup();
+      scriptLoads.delete(src);
+      if (!existing) script.remove();
+      reject(new Error(`脚本加载失败：${src}`));
+    };
+    if (!existing) {
+      script.src = src;
+      document.head.appendChild(script);
+    }
   });
+
+  scriptLoads.set(src, promise);
+  return promise;
 };
 
 const loadStyle = (href) => {
@@ -473,6 +496,7 @@ export default {
       pdfRendering: false,
       pdfRenderQueued: false,
       pdfRenderTask: null,
+      pdfLoadingTask: null,
       pdfResizeObserver: null,
       pdfResizeFrame: 0,
 
@@ -638,11 +662,11 @@ export default {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker;
       this.loadingText = '加载 PDF 文件...';
       const isTemporaryUrl = new URL(this.contentFetchUrl, window.location.origin).searchParams.has('access');
-      const loadingTask = window.pdfjsLib.getDocument({
+      this.pdfLoadingTask = markRaw(window.pdfjsLib.getDocument({
         url: this.contentFetchUrl,
         httpHeaders: isTemporaryUrl ? {} : this.getAuthHeaders(),
-      });
-      this.pdfDoc = await loadingTask.promise;
+      }));
+      this.pdfDoc = markRaw(await this.pdfLoadingTask.promise);
       this.pdfTotalPages = this.pdfDoc.numPages;
       this.pdfCurrentPage = 1;
 
@@ -658,10 +682,10 @@ export default {
       const container = this.$refs.pdfContainerRef;
       if (!container || !window.ResizeObserver) return;
 
-      this.pdfResizeObserver = new ResizeObserver(() => {
+      this.pdfResizeObserver = markRaw(new ResizeObserver(() => {
         cancelAnimationFrame(this.pdfResizeFrame);
         this.pdfResizeFrame = requestAnimationFrame(() => this.queuePdfRender());
-      });
+      }));
       this.pdfResizeObserver.observe(container);
     },
 
@@ -714,7 +738,7 @@ export default {
         context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
         context.clearRect(0, 0, viewport.width, viewport.height);
 
-        this.pdfRenderTask = page.render({ canvasContext: context, viewport });
+        this.pdfRenderTask = markRaw(page.render({ canvasContext: context, viewport }));
         await this.pdfRenderTask.promise;
       } catch (error) {
         if (error?.name !== 'RenderingCancelledException') {
@@ -738,6 +762,10 @@ export default {
       this.pdfResizeObserver = null;
       this.pdfRenderTask?.cancel?.();
       this.pdfRenderTask = null;
+      this.pdfLoadingTask?.destroy?.();
+      this.pdfLoadingTask = null;
+      this.pdfDoc?.destroy?.();
+      this.pdfDoc = null;
       this.pdfRendering = false;
       this.pdfRenderQueued = false;
     },

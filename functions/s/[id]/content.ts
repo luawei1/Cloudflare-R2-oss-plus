@@ -7,6 +7,15 @@ interface Env {
   ossShares: KVNamespace;
 }
 
+function isMediaFile(fileName: string): boolean {
+  const extension = fileName.split(".").pop()?.toLowerCase() || "";
+  return [
+    "jpg", "jpeg", "png", "gif", "webp", "avif", "svg",
+    "mp4", "webm", "ogg", "mov", "m4v",
+    "mp3", "wav", "flac", "m4a", "aac", "oga",
+  ].includes(extension);
+}
+
 function isPreviewAuthorized(share: ShareData, context: any, host: string): Promise<boolean> | boolean {
   if (!share.password) return true;
   return hasSharePreviewSession(
@@ -37,6 +46,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return new Response("分享已过期", { status: 410 });
     }
     if (share.allowPreview === false) return new Response("此分享未开启预览", { status: 403 });
+    if (!isMediaFile(share.fileName)) return new Response("此文件仅支持下载", { status: 403 });
     if (!(await isPreviewAuthorized(share, context, requestUrl.hostname))) {
       return new Response("需要先在分享页面验证密码", { status: 401 });
     }
