@@ -2,8 +2,10 @@
   <div
     class="app-container"
     :data-theme="theme"
-    @dragenter.prevent
-    @dragover.prevent
+    :class="{ 'drag-active': isDraggingFiles }"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent="onDragOver"
+    @dragleave.prevent="onDragLeave"
     @drop.prevent="onDrop"
   >
     <!-- Header -->
@@ -53,6 +55,19 @@
       <!-- Upload Progress -->
       <div v-if="uploadProgress !== null" class="upload-progress">
         <div class="upload-progress-bar" :style="{ width: uploadProgress + '%' }"></div>
+      </div>
+
+      <!-- Drag Upload Hint -->
+      <div v-if="isDraggingFiles" class="drag-upload-overlay">
+        <div class="drag-upload-card">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <strong>{{ isReadonly ? '当前账号不可上传' : '释放鼠标上传到当前文件夹' }}</strong>
+          <span>{{ cwd || '根目录' }}</span>
+        </div>
       </div>
 
       <!-- Loading State -->
@@ -496,6 +511,8 @@ export default {
     // Upload
     showUploadPopup: false,
     uploadProgress: null,
+    dragDepth: 0,
+    isDraggingFiles: false,
     uploadQueue: [],
     isProcessingUploadQueue: false,
     uploadResumeInfo: {},
@@ -1347,13 +1364,48 @@ export default {
         });
     },
 
+    hasDraggedFiles(ev) {
+      return Array.from(ev.dataTransfer?.types || []).includes('Files');
+    },
+
+    onDragEnter(ev) {
+      if (!this.hasDraggedFiles(ev)) return;
+      this.dragDepth += 1;
+      this.isDraggingFiles = true;
+    },
+
+    onDragOver(ev) {
+      if (!this.hasDraggedFiles(ev)) return;
+      ev.dataTransfer.dropEffect = this.isReadonly ? 'none' : 'copy';
+      this.isDraggingFiles = true;
+    },
+
+    onDragLeave(ev) {
+      if (!this.hasDraggedFiles(ev)) return;
+      this.dragDepth = Math.max(0, this.dragDepth - 1);
+      if (this.dragDepth === 0) this.isDraggingFiles = false;
+    },
+
+    getDroppedFiles(dataTransfer) {
+      if (!dataTransfer) return [];
+      if (dataTransfer.items?.length) {
+        return Array.from(dataTransfer.items)
+          .filter((item) => item.kind === 'file')
+          .map((item) => item.getAsFile())
+          .filter(Boolean);
+      }
+      return Array.from(dataTransfer.files || []);
+    },
+
     onDrop(ev) {
-      let files;
-      if (ev.dataTransfer.items) {
-        files = [...ev.dataTransfer.items]
-          .filter((item) => item.kind === "file")
-          .map((item) => item.getAsFile());
-      } else files = ev.dataTransfer.files;
+      this.dragDepth = 0;
+      this.isDraggingFiles = false;
+      const files = this.getDroppedFiles(ev.dataTransfer);
+      if (!files.length) return;
+      if (this.isReadonly) {
+        this.$refs.toast?.error('当前账号没有上传权限');
+        return;
+      }
       this.uploadFiles(files);
     },
 
@@ -2139,6 +2191,59 @@ export default {
 </script>
 
 <style>
+/* Drag Upload */
+.app-container.drag-active {
+  cursor: copy;
+}
+
+.drag-upload-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.drag-upload-card {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 2px dashed rgba(243, 128, 32, 0.75);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.drag-upload-card svg {
+  width: 48px;
+  height: 48px;
+  color: var(--primary-color);
+}
+
+.drag-upload-card strong {
+  font-size: 18px;
+}
+
+.drag-upload-card span {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+[data-theme="dark"] .drag-upload-card {
+  background: rgba(30, 41, 59, 0.94);
+}
+
 /* Context Menu Styles */
 .context-menu {
   background: var(--card-bg);
