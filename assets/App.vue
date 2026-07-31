@@ -153,6 +153,7 @@
     <UploadPopup
       v-model="showUploadPopup"
       @upload="onUploadClicked"
+      @importLink="openRemoteImport"
       @createFolder="createFolder"
     />
 
@@ -515,6 +516,7 @@ export default {
     isDraggingFiles: false,
     uploadQueue: [],
     isProcessingUploadQueue: false,
+    remoteImporting: false,
     uploadResumeInfo: {},
     uploadConfig: {
       chunkSizeMb: 80,
@@ -1414,6 +1416,59 @@ export default {
       this.uploadFiles(fileElement.files);
       this.showUploadPopup = false;
       fileElement.value = null;
+    },
+
+    openRemoteImport() {
+      this.showUploadPopup = false;
+      this.showInput({
+        title: '从链接导入',
+        description: '将公开文件链接直接保存到当前文件夹',
+        placeholder: 'https://example.com/file.zip',
+        hint: '仅支持无需登录的 HTTP/HTTPS 直链，单文件最大 200MB。',
+        confirmText: '开始导入',
+        callback: (url) => this.importFromLink(url),
+      });
+    },
+
+    async importFromLink(sourceUrl) {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(sourceUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol) || parsedUrl.username || parsedUrl.password) {
+          throw new Error();
+        }
+      } catch {
+        this.$refs.toast?.error('请输入不含账号密码的 HTTP/HTTPS 直链');
+        return;
+      }
+
+      this.remoteImporting = true;
+      this.uploadProgress = 0;
+      const suggestedName = decodeURIComponent(parsedUrl.pathname.split('/').filter(Boolean).pop() || '远程文件');
+      const logId = this.$refs.activityLog?.add('upload', `从链接导入 "${suggestedName}"`, 'pending');
+      try {
+        const response = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+          body: JSON.stringify({ url: sourceUrl.trim(), targetDir: this.cwd || '' }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '从链接导入失败');
+
+        const name = getPathName(data.file.key) || suggestedName;
+        this.uploadProgress = 100;
+        await this.fetchFiles();
+        this.$refs.statsCards?.refresh();
+        this.$refs.activityLog?.update(logId, 'success', `从链接导入 "${name}" 成功`);
+        this.$refs.toast?.success(`已导入 ${name}`);
+      } catch (error) {
+        const message = error.message || '从链接导入失败';
+        this.$refs.activityLog?.update(logId, 'error', `从链接导入 "${suggestedName}" 失败：${message}`);
+        this.$refs.toast?.error(`导入失败：${message}`);
+      } finally {
+        this.remoteImporting = false;
+        this.uploadProgress = null;
+      }
     },
 
     async getTemporaryFileUrl(key) {

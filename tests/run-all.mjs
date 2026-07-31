@@ -1,11 +1,13 @@
 import { run as runApiKeyTests } from "./apikey.test.mjs";
 import { run as runAuthTests } from "./auth.test.mjs";
 import { run as runFileOpsTests } from "./file-ops.test.mjs";
+import { run as runRemoteImportTests } from "./remote-import.test.mjs";
 
 const suites = [
   ["auth", runAuthTests],
   ["apikey", runApiKeyTests],
   ["file-ops", runFileOpsTests],
+  ["remote-import", runRemoteImportTests],
 ];
 
 let failed = false;

@@ -153,22 +153,8 @@ export function extractApiKeyFromHeaders(headers: Headers): string | null {
  * 检查写入权限（用于上传、删除等操作）
  * 支持 Basic Auth 和 API Key 两种认证方式
  */
-export async function getWriteAuthStatusAsync(context: any): Promise<boolean> {
-  const url = context.request.url;
-  const pathParts = url.split("/api/write/items/");
-  let dopath = pathParts.length > 1 ? pathParts[1] : null;
-
+export async function getWriteAuthStatusForPathAsync(context: any, dopath: string): Promise<boolean> {
   if (!dopath) return false;
-
-  // 移除查询参数
-  const queryIndex = dopath.indexOf('?');
-  if (queryIndex !== -1) {
-    dopath = dopath.substring(0, queryIndex);
-  }
-
-  // URL 解码路径
-  dopath = decodeURIComponent(dopath);
-
   const headers = new Headers(context.request.headers);
 
   // 1. 优先检查 API Key 认证
@@ -234,6 +220,17 @@ export async function getWriteAuthStatusAsync(context: any): Promise<boolean> {
   }
 
   return false;
+}
+
+export async function getWriteAuthStatusAsync(context: any): Promise<boolean> {
+  const url = context.request.url;
+  const pathParts = url.split("/api/write/items/");
+  let dopath = pathParts.length > 1 ? pathParts[1] : null;
+  if (!dopath) return false;
+
+  const queryIndex = dopath.indexOf('?');
+  if (queryIndex !== -1) dopath = dopath.substring(0, queryIndex);
+  return getWriteAuthStatusForPathAsync(context, decodeURIComponent(dopath));
 }
 
 /**

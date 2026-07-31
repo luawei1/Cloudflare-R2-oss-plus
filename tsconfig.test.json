@@ -5,5 +5,5 @@
     "rootDir": "./",
     "paths": {}
   },
-  "include": ["utils/auth.ts", "utils/apikey.ts"]
+  "include": ["utils/auth.ts", "utils/apikey.ts", "utils/remote-import.ts"]
 }
