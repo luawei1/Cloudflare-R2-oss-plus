@@ -24,6 +24,7 @@ function json(body: Record<string, any>, status = 200): Response {
 function importError(error: unknown): Response {
   const message = error instanceof Error ? error.message : "从链接导入失败";
   if (message === "REMOTE_IMPORT_SIZE_LIMIT") return json({ error: "源文件超过 200MB 限制" }, 413);
+  if (message === "REMOTE_IMPORT_LENGTH_MISMATCH") return json({ error: "源站文件长度与响应头不一致" }, 502);
   if (message.startsWith("REMOTE_IMPORT_")) return json({ error: message.slice("REMOTE_IMPORT_".length) }, 502);
   return json({ error: message }, 400);
 }
@@ -65,7 +66,10 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     if (!sourceResponse.body) return json({ error: "源站未返回文件内容" }, 502);
 
     const contentLength = parseContentLength(sourceResponse.headers.get("Content-Length"));
-    if (contentLength !== null && contentLength > REMOTE_IMPORT_MAX_BYTES) {
+    if (contentLength === null) {
+      return json({ error: "源站未提供有效 Content-Length，无法安全流式导入" }, 422);
+    }
+    if (contentLength > REMOTE_IMPORT_MAX_BYTES) {
       return json({ error: "源文件超过 200MB 限制" }, 413);
     }
 
@@ -79,11 +83,16 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     const limited = createByteLimitedStream(sourceResponse.body);
+    const fixed = new FixedLengthStream(contentLength);
     const contentType = sourceResponse.headers.get("Content-Type") || "application/octet-stream";
-    await bucket.put(targetKey, limited.stream, {
-      httpMetadata: { contentType },
-      contentLength: contentLength || undefined,
-    });
+
+    await Promise.all([
+      bucket.put(targetKey, fixed.readable, { httpMetadata: { contentType } }),
+      limited.stream.pipeTo(fixed.writable).catch((error) => {
+        if (error?.message === "REMOTE_IMPORT_SIZE_LIMIT") throw error;
+        throw new Error("REMOTE_IMPORT_LENGTH_MISMATCH");
+      }),
+    ]);
 
     return json({
       success: true,

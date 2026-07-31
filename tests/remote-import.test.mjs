@@ -104,4 +104,11 @@ export async function run() {
     await assert.rejects(() => readStream(limited.stream), /REMOTE_IMPORT_SIZE_LIMIT/);
     assert.ok(limited.getBytesRead() > remoteImport.REMOTE_IMPORT_MAX_BYTES);
   });
+
+  await runCase("parseContentLength 拒绝非数字与空值", async () => {
+    assert.equal(remoteImport.parseContentLength(""), null);
+    assert.equal(remoteImport.parseContentLength("12.5"), null);
+    assert.equal(remoteImport.parseContentLength("-1"), null);
+    assert.equal(remoteImport.parseContentLength("0"), 0);
+  });
 }
