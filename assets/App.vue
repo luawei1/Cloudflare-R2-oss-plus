@@ -1074,6 +1074,7 @@ export default {
                   continue;
                 }
                 await this.moveFolderRecursively(key, targetFolderPath);
+                await this.moveShares(ensureTrailingSlash(stripFolderMarker(key)), targetFolderPath);
               } else {
                 const targetFilePath = normalizedPath + fileName;
                 if (targetFilePath === key) {
@@ -1081,6 +1082,7 @@ export default {
                 }
                 await this.copyPaste(key, targetFilePath);
                 await axios.delete(this.getWriteItemUrl(key));
+                await this.moveShares(key, targetFilePath);
               }
             }
             this.clearSelection();
@@ -1800,6 +1802,19 @@ export default {
         }
       });
     },
+    async moveShares(oldKey, newKey) {
+      if (!oldKey || !newKey || oldKey === newKey) return;
+      try {
+        await fetch('/api/share/move', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...this.getAuthHeaders() },
+          body: JSON.stringify({ oldKey, newKey }),
+        });
+      } catch (error) {
+        console.warn('Share links were not migrated:', error);
+      }
+    },
+
     renameFile(key) {
       const currentName = getPathName(key);
       this.showContextMenu = false;
@@ -1816,6 +1831,7 @@ export default {
           try {
             await this.copyPaste(key, `${this.cwd}${newName}`);
             await axios.delete(this.getWriteItemUrl(key));
+            await this.moveShares(key, `${this.cwd}${newName}`);
             this.fetchFiles();
             this.$refs.activityLog?.update(logId, 'success', `重命名 "${currentName}" → "${newName}" 成功`);
           } catch (error) {
@@ -1856,6 +1872,7 @@ export default {
             const sourcePath = normalizedPath;
             const targetPath = parentPath + newName + '/';
             await this.moveFolderRecursively(sourcePath, targetPath);
+            await this.moveShares(sourcePath, targetPath);
             this.uploadProgress = null;
 
             this.$refs.toast?.success('文件夹重命名成功');
@@ -1893,6 +1910,7 @@ export default {
                 return;
               }
               await this.moveFolderRecursively(sourceBasePath, targetBasePath);
+              await this.moveShares(sourceBasePath, targetBasePath);
             } else {
               const targetFilePath = normalizedPath + finalFileName;
               if (targetFilePath === key) {
@@ -1900,6 +1918,7 @@ export default {
               }
               await this.copyPaste(key, targetFilePath);
               await axios.delete(this.getWriteItemUrl(key));
+              await this.moveShares(key, targetFilePath);
             }
 
             this.fetchFiles();

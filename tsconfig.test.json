@@ -3,7 +3,9 @@
   "compilerOptions": {
     "outDir": "./.tmp-test",
     "rootDir": "./",
-    "paths": {}
+    "paths": {
+      "@/*": ["./*"]
+    }
   },
-  "include": ["utils/auth.ts", "utils/apikey.ts", "utils/remote-import.ts"]
+  "include": ["utils/auth.ts", "utils/apikey.ts", "utils/remote-import.ts", "utils/share-move.ts", "utils/share-index.ts", "utils/share.ts"]
 }

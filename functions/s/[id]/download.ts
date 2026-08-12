@@ -89,7 +89,7 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const obj = await bucket.get(share.key);
 
     if (!obj) {
-      return new Response('文件不存在', { status: 404 });
+      return new Response('文件已被移动或删除，请联系分享者', { status: 410 });
     }
 
     const headers = new Headers();
