@@ -48,57 +48,93 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       return new Response('需要密码，请先通过分享页面验证', { status: 401 });
     }
 
-    // 更新下载次数和记录
-    share.downloads++;
+    const range = context.request.headers.get('Range');
+    // 仅首次请求（无 Range 头）才计数和写记录，续传请求不消耗下载额度。
+    if (!range) {
+      share.downloads++;
 
-    // 仅在开启追踪时记录下载者 IP
-    if (share.trackDownloads) {
-      const clientIP = context.request.headers.get('CF-Connecting-IP')
-        || context.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
-        || context.request.headers.get('X-Real-IP')
-        || 'unknown';
-      const userAgent = context.request.headers.get('User-Agent') || undefined;
+      if (share.trackDownloads) {
+        const clientIP = context.request.headers.get('CF-Connecting-IP')
+          || context.request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim()
+          || context.request.headers.get('X-Real-IP')
+          || 'unknown';
+        const userAgent = context.request.headers.get('User-Agent') || undefined;
 
-      const downloadRecord: DownloadRecord = {
-        ip: clientIP,
-        time: Date.now(),
-        userAgent: userAgent,
-      };
+        const downloadRecord: DownloadRecord = {
+          ip: clientIP,
+          time: Date.now(),
+          userAgent: userAgent,
+        };
 
-      if (!share.downloadRecords) {
-        share.downloadRecords = [];
+        if (!share.downloadRecords) {
+          share.downloadRecords = [];
+        }
+        if (share.downloadRecords.length >= 100) {
+          share.downloadRecords.shift();
+        }
+        share.downloadRecords.push(downloadRecord);
       }
-      if (share.downloadRecords.length >= 100) {
-        share.downloadRecords.shift();
-      }
-      share.downloadRecords.push(downloadRecord);
-    }
 
-    const ttl = share.expiresAt ? Math.floor((share.expiresAt - Date.now()) / 1000) : undefined;
-    const kvOptions: KVNamespacePutOptions = {};
-    if (ttl && ttl > 0) {
-      kvOptions.expirationTtl = ttl;
+      const ttl = share.expiresAt ? Math.floor((share.expiresAt - Date.now()) / 1000) : undefined;
+      const kvOptions: KVNamespacePutOptions = {};
+      if (ttl && ttl > 0) {
+        kvOptions.expirationTtl = ttl;
+      }
+      await context.env.ossShares.put(`share:${shareId}`, JSON.stringify(share), kvOptions);
     }
-    await context.env.ossShares.put(`share:${shareId}`, JSON.stringify(share), kvOptions);
 
     // 获取文件
     const [bucket] = await parseBucketPath(context);
-    if (!bucket || typeof bucket.get !== "function") {
-      return new Response('存储桶未配置', { status: 500 });
-    }
-    const obj = await bucket.get(share.key);
+    if (!bucket) return new Response('存储桶未配置', { status: 500 });
 
-    if (!obj) {
+    // S3/OneDrive 后端：转发 Range 给源站并透传响应
+    if (typeof bucket.fetchObject === "function") {
+      const headers = new Headers();
+      if (range) headers.set("Range", range);
+      const response = await bucket.fetchObject(share.key, { method: "GET", headers });
+      const responseHeaders = new Headers(response.headers);
+      responseHeaders.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(share.fileName)}`);
+      responseHeaders.set('Accept-Ranges', 'bytes');
+      responseHeaders.set('Cache-Control', 'private, no-store');
+      responseHeaders.set('Access-Control-Allow-Origin', '*');
+      return new Response(response.body, { status: response.status, statusText: response.statusText, headers: responseHeaders });
+    }
+
+    if (typeof bucket.get !== "function") return new Response('存储桶未配置', { status: 500 });
+
+    // R2 后端：用 bucket.get 的 range 选项取分片
+    let object;
+    if (range) {
+      const match = /^bytes=(\d+)-(\d*)$/.exec(range);
+      if (!match) return new Response("无效的 Range 请求", { status: 416 });
+      const offset = Number(match[1]);
+      const end = match[2] ? Number(match[2]) : undefined;
+      const length = end === undefined ? undefined as any : end - offset + 1;
+      object = await bucket.get(share.key, { range: length ? { offset, length } : { offset } });
+    } else {
+      object = await bucket.get(share.key);
+    }
+
+    if (!object) {
       return new Response('文件已被移动或删除，请联系分享者', { status: 410 });
     }
 
     const headers = new Headers();
-    headers.set('Content-Type', obj.httpMetadata?.contentType || 'application/octet-stream');
+    headers.set('Content-Type', object.httpMetadata?.contentType || 'application/octet-stream');
     headers.set('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(share.fileName)}`);
-    headers.set('Content-Length', obj.size.toString());
+    headers.set('Accept-Ranges', 'bytes');
+    headers.set('Cache-Control', 'private, no-store');
     headers.set('Access-Control-Allow-Origin', '*');
 
-    return new Response(obj.body, { headers });
+    if (range && object.range) {
+      const end = object.range.offset + object.range.length - 1;
+      headers.set('Content-Range', `bytes ${object.range.offset}-${end}/${object.size}`);
+      headers.set('Content-Length', object.range.length.toString());
+      return new Response(object.body, { status: 206, headers });
+    }
+
+    headers.set('Content-Length', object.size.toString());
+    return new Response(object.body, { headers });
   } catch (error) {
     console.error('Download error:', error);
     return new Response('下载失败', { status: 500 });
