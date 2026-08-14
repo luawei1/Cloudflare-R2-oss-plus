@@ -75,9 +75,16 @@ export const SIZE_LIMIT = 80 * 1000 * 1000; // 80MB
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_RETRY_DELAY_MS = 800;
 const DEFAULT_CONCURRENCY = 3;
+const PART_TIMEOUT_MS = 120000; // 2 minutes per part
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableError(error) {
+  if (error?.code === "ERR_NETWORK" || error?.code === "ECONNABORTED") return true;
+  if (!error?.response) return true;
+  return error.response.status >= 500;
 }
 
 /**
@@ -106,6 +113,14 @@ export async function multipartUpload(key, file, options) {
   const initialParts = Array.isArray(options?.resume?.uploadedParts)
     ? options.resume.uploadedParts.slice()
     : [];
+  // 用 Set 按 partNumber 判断已完成分片，避免数组压实后的下标错位。
+  const completedParts = new Set(initialParts.map((p) => p.partNumber));
+  // uploadedParts 按 partNumber-1 存储为稀疏数组，不重新压实。
+  const uploadedParts = [];
+  for (const part of initialParts) {
+    uploadedParts[part.partNumber - 1] = part;
+  }
+
   const uploadId = resumeUploadId
     ? resumeUploadId
     : await axios
@@ -118,18 +133,22 @@ export async function multipartUpload(key, file, options) {
         })
         .then((res) => res.data.uploadId);
   const totalChunks = Math.ceil(file.size / chunkSize);
-  const uploadedParts = initialParts;
+
+  const abortController = new AbortController();
 
   const uploadPartWithRetry = async (partNumber, chunk) => {
     const searchParams = new URLSearchParams({ partNumber, uploadId });
     let attempt = 0;
     while (true) {
+      if (abortController.signal.aborted) throw Object.assign(new Error("ABORTED"), { aborted: true });
       try {
         const response = await axios.put(
           `/api/write/items/${encodedKey}?${searchParams}`,
           chunk,
           {
             headers,
+            timeout: PART_TIMEOUT_MS,
+            signal: abortController.signal,
             onUploadProgress(progressEvent) {
               if (typeof options?.onUploadProgress !== "function") return;
               options.onUploadProgress({
@@ -142,13 +161,13 @@ export async function multipartUpload(key, file, options) {
             },
           }
         );
-        return {
-          partNumber,
-          etag: response.headers.etag,
-        };
+        return { partNumber, etag: response.headers.etag };
       } catch (error) {
+        if (abortController.signal.aborted || error?.aborted) {
+          throw Object.assign(new Error("ABORTED"), { aborted: true });
+        }
         error.partNumber = partNumber;
-        if (attempt >= maxRetries) throw error;
+        if (!isRetryableError(error) || attempt >= maxRetries) throw error;
         const jitter = Math.floor(Math.random() * 200);
         const delay = retryDelayMs * Math.pow(2, attempt) + jitter;
         attempt += 1;
@@ -159,40 +178,63 @@ export async function multipartUpload(key, file, options) {
 
   const pendingParts = [];
   for (let i = 1; i <= totalChunks; i++) {
-    if (uploadedParts[i - 1]) continue;
+    if (completedParts.has(i)) continue;
     const chunk = file.slice((i - 1) * chunkSize, i * chunkSize);
     pendingParts.push({ partNumber: i, chunk });
   }
 
   let nextIndex = 0;
   const workerCount = Math.min(concurrency, pendingParts.length || 1);
+  let firstError = null;
+
   const workers = Array.from({ length: workerCount }, async () => {
     while (nextIndex < pendingParts.length) {
+      if (abortController.signal.aborted) return;
       const current = pendingParts[nextIndex];
       nextIndex += 1;
       try {
         const { partNumber, etag } = await uploadPartWithRetry(current.partNumber, current.chunk);
         uploadedParts[partNumber - 1] = { partNumber, etag };
+        completedParts.add(partNumber);
       } catch (error) {
-        const multipartError = new Error("Multipart upload failed");
-        multipartError.isMultipartUpload = true;
-        multipartError.partNumber = error?.partNumber;
-        multipartError.uploadId = uploadId;
-        multipartError.uploadedParts = uploadedParts.filter(Boolean);
-        multipartError.totalChunks = totalChunks;
-        multipartError.cause = error;
-        throw multipartError;
+        if (error?.aborted) return;
+        if (!firstError) {
+          firstError = error;
+          abortController.abort();
+        }
+        return;
       }
     }
   });
 
   await Promise.all(workers);
-  const completeParams = new URLSearchParams({ uploadId });
-  await axios.post(
-    `/api/write/items/${encodedKey}?${completeParams}`,
-    {
-      parts: uploadedParts,
-    },
-    { headers }
-  );
+
+  if (firstError) {
+    const multipartError = new Error("Multipart upload failed");
+    multipartError.isMultipartUpload = true;
+    multipartError.partNumber = firstError?.partNumber;
+    multipartError.uploadId = uploadId;
+    multipartError.uploadedParts = uploadedParts.filter(Boolean);
+    multipartError.totalChunks = totalChunks;
+    multipartError.cause = firstError;
+    throw multipartError;
+  }
+
+  // complete() 失败也需保存续传信息
+  try {
+    const completeParams = new URLSearchParams({ uploadId });
+    await axios.post(
+      `/api/write/items/${encodedKey}?${completeParams}`,
+      { parts: uploadedParts.filter(Boolean).sort((a, b) => a.partNumber - b.partNumber) },
+      { headers }
+    );
+  } catch (error) {
+    const multipartError = new Error("Multipart upload complete failed");
+    multipartError.isMultipartUpload = true;
+    multipartError.uploadId = uploadId;
+    multipartError.uploadedParts = uploadedParts.filter(Boolean);
+    multipartError.totalChunks = totalChunks;
+    multipartError.cause = error;
+    throw multipartError;
+  }
 }

@@ -105,6 +105,8 @@ export default {
     },
     async open() {
       this.resetForm();
+      this.existingShares = [];
+      this.loadingShares = true;
       await this.loadShares();
     },
     resetForm() {

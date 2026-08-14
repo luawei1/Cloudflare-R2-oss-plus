@@ -173,7 +173,6 @@
               <option :value="60">60MB</option>
               <option :value="80">80MB</option>
               <option :value="100">100MB</option>
-              <option :value="120">120MB</option>
             </select>
           </label>
           <label class="upload-settings-row">
@@ -2154,7 +2153,7 @@ export default {
     },
 
     normalizeUploadConfig(config) {
-      const chunkSizeMb = Math.min(120, Math.max(20, Number(config.chunkSizeMb) || 80));
+      const chunkSizeMb = Math.min(100, Math.max(20, Number(config.chunkSizeMb) || 80));
       const concurrency = Math.min(4, Math.max(1, Number(config.concurrency) || 3));
       const retries = Math.min(5, Math.max(0, Number(config.retries) || 3));
       const autoResume = Boolean(config.autoResume);
